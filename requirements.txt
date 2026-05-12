@@ -1,0 +1,14 @@
+# --- Web UI ---
+streamlit>=1.30.0
+
+# --- Computer Vision & Array Math ---
+opencv-python>=4.8.0
+numpy<2.0.0
+Pillow>=10.0.0
+
+# --- Deep Learning Models ---
+ultralytics>=8.1.0
+
+# --- OCR Engine (STABLE VERSIONS ONLY) ---
+paddlepaddle==2.6.2
+paddleocr==2.8.1

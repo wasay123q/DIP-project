@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# Environment files
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Streamlit
+.streamlit/
+
+# Outputs
+blurred_plates/
+extracted_data/
+
+# Logs
+*.log
+
+# Model/cache artifacts
+*.pt
