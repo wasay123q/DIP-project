@@ -34,27 +34,40 @@ class ImageProcessor:
         return cv2.warpPerspective(image, M, (maxWidth, maxHeight))
 
     @staticmethod
-    def enhance_for_ocr(warped_plate):
+    def enhance_for_ocr(warped_plate, mode="clahe"):
         """
-        Refined DIP pipeline for Deep Learning OCRs.
-        Fixes lighting and noise, but preserves natural character gradients.
+        DIP enhancement pipeline for OCR readiness.
+        mode: clahe | he | sharpen | adaptive | none
         """
-        # 1. Grayscale Conversion
+        if mode == "none":
+            return warped_plate
+
         gray = cv2.cvtColor(warped_plate, cv2.COLOR_BGR2GRAY)
 
-        # 2. CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        if mode == "he":
+            enhanced_gray = cv2.equalizeHist(gray)
+            smoothed = cv2.bilateralFilter(enhanced_gray, 9, 17, 17)
+            return cv2.cvtColor(smoothed, cv2.COLOR_GRAY2BGR)
+
+        if mode == "sharpen":
+            blurred = cv2.GaussianBlur(gray, (0, 0), 1.2)
+            sharp = cv2.addWeighted(gray, 1.6, blurred, -0.6, 0)
+            smoothed = cv2.bilateralFilter(sharp, 7, 17, 17)
+            return cv2.cvtColor(smoothed, cv2.COLOR_GRAY2BGR)
+
+        if mode == "adaptive":
+            denoised = cv2.medianBlur(gray, 3)
+            bw = cv2.adaptiveThreshold(
+                denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY, 21, 10
+            )
+            return cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+
+        # Default: CLAHE
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced_gray = clahe.apply(gray)
-
-        # 3. Spatial Filtering (Bilateral Filter)
-        # Melts away background grain but keeps the text edges sharp and natural
         smoothed = cv2.bilateralFilter(enhanced_gray, 11, 17, 17)
-
-        # 4. Convert back to 3-channel BGR format
-        # Deep Learning OCRs expect a standard 3-channel image array
-        final_plate = cv2.cvtColor(smoothed, cv2.COLOR_GRAY2BGR)
-
-        return final_plate
+        return cv2.cvtColor(smoothed, cv2.COLOR_GRAY2BGR)
 
     def find_plate_direct(self, original_img):
         """
@@ -82,9 +95,125 @@ class ImageProcessor:
         return None
 
     @staticmethod
+    def validate_plate_candidate(image, pts):
+        if pts is None or len(pts) != 4:
+            return False
+        warped = ImageProcessor.four_point_transform(image, pts)
+        h, w = warped.shape[:2]
+        if h == 0 or w == 0:
+            return False
+        aspect = w / float(h)
+        if aspect < 2.0 or aspect > 6.5:
+            return False
+        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        edge_ratio = np.mean(edges > 0)
+        return edge_ratio > 0.03
+
+    @staticmethod
+    def _contour_score(rect_w, rect_h, area, edge_density):
+        aspect = rect_w / float(rect_h + 1e-6)
+        aspect_score = 1.0 - min(abs(aspect - 4.0) / 4.0, 1.0)
+        size_score = min(area / (250 * 80), 1.0)
+        return 0.5 * aspect_score + 0.3 * size_score + 0.2 * min(edge_density / 0.1, 1.0)
+
+    def find_plate_dip(self, original_img):
+        gray = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blur, 60, 180)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        h_img, w_img = gray.shape[:2]
+
+        best_score = 0
+        best_pts = None
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < (w_img * h_img) * 0.002:
+                continue
+            rect = cv2.minAreaRect(cnt)
+            (cx, cy), (w, h), angle = rect
+            if w == 0 or h == 0:
+                continue
+            rect_w, rect_h = max(w, h), min(w, h)
+            aspect = rect_w / float(rect_h + 1e-6)
+            if aspect < 2.0 or aspect > 6.5:
+                continue
+
+            box = cv2.boxPoints(rect)
+            box = np.int32(box)
+            x, y, bw, bh = cv2.boundingRect(box)
+            x2, y2 = x + bw, y + bh
+            x, y = max(0, x), max(0, y)
+            x2, y2 = min(w_img, x2), min(h_img, y2)
+            crop = gray[y:y2, x:x2]
+            if crop.size == 0:
+                continue
+            edge_density = np.mean(cv2.Canny(crop, 50, 150) > 0)
+            score = self._contour_score(rect_w, rect_h, area, edge_density)
+
+            if score > best_score:
+                best_score = score
+                best_pts = box
+
+        if best_pts is None:
+            return None
+
+        return best_pts
+
+    def find_plate_hybrid(self, original_img):
+        pts = self.find_plate_direct(original_img)
+        if pts is not None and self.validate_plate_candidate(original_img, pts):
+            return pts, "YOLO"
+
+        dip_pts = self.find_plate_dip(original_img)
+        if dip_pts is not None and self.validate_plate_candidate(original_img, dip_pts):
+            return dip_pts, "DIP"
+
+        return None, None
+
+    @staticmethod
     def blur_plate_on_original(image, pts):
         mask = np.zeros_like(image)
         cv2.fillPoly(mask, [pts], (255, 255, 255))
         blurred = cv2.GaussianBlur(image, (51, 51), 0)
         out = np.where(mask == np.array([255, 255, 255]), blurred, image)
         return out
+
+    @staticmethod
+    def segment_characters(plate_img):
+        gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        bw = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 31, 10
+        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        h, w = bw.shape[:2]
+
+        boxes = []
+        for cnt in contours:
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            if ch < 0.35 * h or ch > 0.95 * h:
+                continue
+            aspect = cw / float(ch + 1e-6)
+            if aspect < 0.2 or aspect > 1.2:
+                continue
+            if cw < 0.02 * w:
+                continue
+            boxes.append((x, y, cw, ch))
+
+        boxes = sorted(boxes, key=lambda b: b[0])
+        characters = []
+        for (x, y, cw, ch) in boxes:
+            char = plate_img[y:y + ch, x:x + cw]
+            if char.size > 0:
+                characters.append(char)
+
+        return characters, bw, boxes

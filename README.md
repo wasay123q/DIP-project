@@ -3,11 +3,12 @@
 A Streamlit-based Automatic License Plate Recognition (ALPR) application that detects license plates using a custom YOLOv8 model, enhances the plate region with a Digital Image Processing (DIP) pipeline, and extracts text via PaddleOCR. It also supports anonymization by blurring detected plates on the original image.
 
 ## Highlights
-- **Custom YOLOv8 plate detection** with direct inference for fast localization.
-- **DIP enhancement pipeline** (CLAHE + bilateral filtering) for OCR-ready images.
+- **YOLOv8 plate localization (AI-only detection)** for robust plate finding.
+- **Extensive DIP pipeline**: grayscale, CLAHE/HE, sharpening, adaptive thresholding, spatial filtering.
+- **Character segmentation (DIP)** for visual verification of extracted glyphs.
 - **PaddleOCR-based text extraction** with timestamped CSV logging.
 - **Privacy mode** to blur license plates in the original image.
-- **Streamlit UI** for easy, interactive use.
+- **Streamlit UI** with selectable DIP modes.
 
 ## Project Structure
 - [app.py](app.py): Streamlit application entry point and UI logic.
@@ -19,16 +20,18 @@ A Streamlit-based Automatic License Plate Recognition (ALPR) application that de
 
 ## Architecture Overview
 1. **Upload image** in the Streamlit UI.
-2. **YOLOv8 detects** the plate location and returns a bounding box.
+2. **Plate localization** via YOLOv8 (AI-only detection).
 3. **Perspective warp** isolates the plate region.
-4. **DIP enhancement** improves contrast and reduces noise.
-5. **PaddleOCR extracts** the plate text.
-6. **Output saved** to CSV; optional **blurring** for anonymization.
+4. **DIP enhancement** (CLAHE/HE/sharpen/adaptive/none).
+5. **Character segmentation** (DIP) for visual verification.
+6. **PaddleOCR extracts** the plate text.
+7. **Output saved** to CSV; optional **blurring** for anonymization.
 
 ## Features
 ### 1) Plate Text Extraction
-- Detects license plate location.
-- Warps and enhances the plate region.
+- Detects license plate location (YOLOv8).
+- Warps and enhances the plate region (selectable DIP mode).
+- Optionally segments characters for visualization.
 - Extracts text using PaddleOCR.
 - Saves results to a timestamped CSV file in the extracted_data folder.
 
@@ -69,6 +72,7 @@ streamlit run app.py
 - Add post-processing for plate normalization (e.g., regex validation).
 - Store results in a database instead of CSV.
 - Add batch processing for multiple images.
+- Add quantitative evaluation (precision/recall, OCR accuracy) for YOLO vs DIP.
 
 ## Acknowledgements
 - **Ultralytics YOLOv8** for detection

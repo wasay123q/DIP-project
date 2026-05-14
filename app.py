@@ -38,6 +38,12 @@ st.markdown("Upload a vehicle image below to isolate, enhance, and extract the l
 st.sidebar.header("Control Panel")
 action = st.sidebar.radio("Choose Action:", ["Extract Plate Text", "Blur Number Plate"])
 st.sidebar.markdown("---")
+enhancement_mode = st.sidebar.selectbox(
+    "DIP Enhancement Mode",
+    ["clahe", "he", "sharpen", "adaptive", "none"]
+)
+show_segments = st.sidebar.checkbox("Show Character Segments", value=False)
+st.sidebar.markdown("---")
 st.sidebar.markdown("**Powered by:**\n- YOLOv8 (Custom Trained)\n- Spatial DIP Filtering\n- PaddleOCR")
 
 # --- Main App Logic ---
@@ -55,9 +61,11 @@ if uploaded_file is not None:
         
         with st.spinner("Running AI Pipeline..."):
             plate_pts = processor.find_plate_direct(original_img)
+            detection_source = "YOLO"
             
             if plate_pts is not None:
                 base_name = os.path.splitext(uploaded_file.name)[0]
+                st.info(f"✅ Detection source: **{detection_source}**")
 
                 if action == "Extract Plate Text":
                     st.markdown("---")
@@ -69,10 +77,23 @@ if uploaded_file is not None:
                         st.markdown("**1. Cropped & Warped (Raw)**")
                         st.image(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB), use_container_width=True)
                     
-                    enhanced_plate = processor.enhance_for_ocr(warped)
+                    enhanced_plate = processor.enhance_for_ocr(warped, enhancement_mode)
                     with col2:
                         st.markdown("**2. DIP Enhanced (Deep Learning Ready)**")
                         st.image(cv2.cvtColor(enhanced_plate, cv2.COLOR_BGR2RGB), use_container_width=True)
+
+                    if show_segments:
+                        chars, bw, boxes = processor.segment_characters(enhanced_plate)
+                        st.markdown("**3. Character Segmentation (DIP)**")
+                        st.image(bw, caption="Adaptive Threshold Mask", use_container_width=True)
+                        if chars:
+                            st.markdown("**Segments (Left → Right)**")
+                            st.image(
+                                [cv2.cvtColor(c, cv2.COLOR_BGR2RGB) for c in chars],
+                                use_container_width=True
+                            )
+                        else:
+                            st.info("No character segments found. Try another enhancement mode or a clearer image.")
                     
                     text = extractor.extract_plate_text(enhanced_plate)
                     
