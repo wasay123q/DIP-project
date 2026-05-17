@@ -37,12 +37,41 @@ class ImageProcessor:
     def enhance_for_ocr(warped_plate, mode="clahe"):
         """
         DIP enhancement pipeline for OCR readiness.
-        mode: clahe | he | sharpen | adaptive | none
+        mode: clahe | he | sharpen | adaptive | fft | none
         """
         if mode == "none":
             return warped_plate
 
         gray = cv2.cvtColor(warped_plate, cv2.COLOR_BGR2GRAY)
+
+        if mode == "fft":
+            # Apply Discrete Fourier Transform
+            dft = cv2.dft(np.float32(gray), flags=cv2.DFT_COMPLEX_OUTPUT)
+            dft_shift = np.fft.fftshift(dft)
+            
+            rows, cols = gray.shape
+            crow, ccol = rows // 2, cols // 2
+            
+            # Create a High Pass Filter (HPF) mask to sharpen edges
+            mask = np.ones((rows, cols, 2), np.uint8)
+            r = 15 # radius for low frequencies to block
+            x, y = np.ogrid[:rows, :cols]
+            mask_area = (x - crow) ** 2 + (y - ccol) ** 2 <= r*r
+            mask[mask_area] = 0
+            
+            # Apply mask and inverse DFT
+            fshift = dft_shift * mask
+            f_ishift = np.fft.ifftshift(fshift)
+            img_back = cv2.idft(f_ishift)
+            img_back = cv2.magnitude(img_back[:, :, 0], img_back[:, :, 1])
+            
+            # Normalize to 0-255
+            cv2.normalize(img_back, img_back, 0, 255, cv2.NORM_MINMAX)
+            img_back = np.uint8(img_back)
+            
+            # Combine original with extracted high-frequency edges
+            sharp = cv2.addWeighted(gray, 1.2, img_back, 0.5, 0)
+            return cv2.cvtColor(sharp, cv2.COLOR_GRAY2BGR)
 
         if mode == "he":
             enhanced_gray = cv2.equalizeHist(gray)
@@ -69,111 +98,81 @@ class ImageProcessor:
         smoothed = cv2.bilateralFilter(enhanced_gray, 11, 17, 17)
         return cv2.cvtColor(smoothed, cv2.COLOR_GRAY2BGR)
 
+    # --- MANDATORY REQUIREMENT: EDGE DETECTION ---
+    @staticmethod
+    def generate_edge_map(warped_plate):
+        """
+        Generates a Sobel edge map to demonstrate spatial gradient analysis.
+        """
+        gray = cv2.cvtColor(warped_plate, cv2.COLOR_BGR2GRAY)
+        # Apply Sobel on X and Y axes
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        
+        # Calculate combined gradient magnitude
+        magnitude = cv2.magnitude(sobelx, sobely)
+        cv2.normalize(magnitude, magnitude, 0, 255, cv2.NORM_MINMAX)
+        return np.uint8(magnitude)
+
+    # --- MANDATORY REQUIREMENT: QUANTITATIVE EVALUATION ---
+    @staticmethod
+    def calculate_metrics(img1, img2):
+        """
+        Calculates MSE and PSNR between the raw plate and enhanced plate.
+        """
+        # Ensure grayscale for accurate structural comparison
+        if len(img1.shape) == 3:
+            img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+        if len(img2.shape) == 3:
+            img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+            
+        # Calculate Mean Squared Error (MSE)
+        err = np.sum((img1.astype("float") - img2.astype("float")) ** 2)
+        err /= float(img1.shape[0] * img1.shape[1])
+        mse = err
+        
+        # Calculate Peak Signal-to-Noise Ratio (PSNR)
+        if mse == 0:
+            psnr = float('inf') # Images are perfectly identical
+        else:
+            max_pixel = 255.0
+            psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
+            
+        return mse, psnr
+
+    # --- MANDATORY REQUIREMENT: HISTOGRAM ANALYSIS ---
+    @staticmethod
+    def compute_histogram(image):
+        """
+        Computes a grayscale histogram (256 bins).
+        """
+        if image is None or image.size == 0:
+            return np.zeros(256, dtype=float)
+
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        gray = gray.astype(np.uint8)
+        hist = np.bincount(gray.ravel(), minlength=256).astype(float)
+        return hist
+
     def find_plate_direct(self, original_img):
         """
         Direct Pipeline: Custom YOLOv8 model directly finds the license plate.
         """
-        # Run the custom model with a 10% confidence threshold and strict sizing
         results = self.model(original_img, conf=0.1, imgsz=640) 
         
         for result in results:
             boxes = result.boxes
             if len(boxes) > 0:
-                # Grab the highest confidence box (The License Plate)
                 x1, y1, x2, y2 = map(int, boxes[0].xyxy[0])
-                
-                # Convert the bounding box into the 4 points needed for the DIP pipeline
                 pts = np.array([
-                    [x1, y1], # Top-left
-                    [x2, y1], # Top-right
-                    [x2, y2], # Bottom-right
-                    [x1, y2]  # Bottom-left
+                    [x1, y1], [x2, y1], [x2, y2], [x1, y2]
                 ], dtype=np.int32)
-                
                 return pts
-                
         return None
-
-    @staticmethod
-    def validate_plate_candidate(image, pts):
-        if pts is None or len(pts) != 4:
-            return False
-        warped = ImageProcessor.four_point_transform(image, pts)
-        h, w = warped.shape[:2]
-        if h == 0 or w == 0:
-            return False
-        aspect = w / float(h)
-        if aspect < 2.0 or aspect > 6.5:
-            return False
-        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 50, 150)
-        edge_ratio = np.mean(edges > 0)
-        return edge_ratio > 0.03
-
-    @staticmethod
-    def _contour_score(rect_w, rect_h, area, edge_density):
-        aspect = rect_w / float(rect_h + 1e-6)
-        aspect_score = 1.0 - min(abs(aspect - 4.0) / 4.0, 1.0)
-        size_score = min(area / (250 * 80), 1.0)
-        return 0.5 * aspect_score + 0.3 * size_score + 0.2 * min(edge_density / 0.1, 1.0)
-
-    def find_plate_dip(self, original_img):
-        gray = cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 60, 180)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        h_img, w_img = gray.shape[:2]
-
-        best_score = 0
-        best_pts = None
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < (w_img * h_img) * 0.002:
-                continue
-            rect = cv2.minAreaRect(cnt)
-            (cx, cy), (w, h), angle = rect
-            if w == 0 or h == 0:
-                continue
-            rect_w, rect_h = max(w, h), min(w, h)
-            aspect = rect_w / float(rect_h + 1e-6)
-            if aspect < 2.0 or aspect > 6.5:
-                continue
-
-            box = cv2.boxPoints(rect)
-            box = np.int32(box)
-            x, y, bw, bh = cv2.boundingRect(box)
-            x2, y2 = x + bw, y + bh
-            x, y = max(0, x), max(0, y)
-            x2, y2 = min(w_img, x2), min(h_img, y2)
-            crop = gray[y:y2, x:x2]
-            if crop.size == 0:
-                continue
-            edge_density = np.mean(cv2.Canny(crop, 50, 150) > 0)
-            score = self._contour_score(rect_w, rect_h, area, edge_density)
-
-            if score > best_score:
-                best_score = score
-                best_pts = box
-
-        if best_pts is None:
-            return None
-
-        return best_pts
-
-    def find_plate_hybrid(self, original_img):
-        pts = self.find_plate_direct(original_img)
-        if pts is not None and self.validate_plate_candidate(original_img, pts):
-            return pts, "YOLO"
-
-        dip_pts = self.find_plate_dip(original_img)
-        if dip_pts is not None and self.validate_plate_candidate(original_img, dip_pts):
-            return dip_pts, "DIP"
-
-        return None, None
 
     @staticmethod
     def blur_plate_on_original(image, pts):

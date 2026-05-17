@@ -1,84 +1,103 @@
 # Deep Learning ALPR System
 
-A Streamlit-based Automatic License Plate Recognition (ALPR) application that detects license plates using a custom YOLOv8 model, enhances the plate region with a Digital Image Processing (DIP) pipeline, and extracts text via PaddleOCR. It also supports anonymization by blurring detected plates on the original image.
+![DIP](https://img.shields.io/badge/DIP-Academic%20Project-4c8bf5)
+![YOLOv8](https://img.shields.io/badge/YOLOv8-Custom%20Model-8a2be2)
+![Streamlit](https://img.shields.io/badge/UI-Streamlit-ff4b4b)
+![License](https://img.shields.io/badge/License-Academic-lightgrey)
 
-## Highlights
-- **YOLOv8 plate localization (AI-only detection)** for robust plate finding.
-- **Extensive DIP pipeline**: grayscale, CLAHE/HE, sharpening, adaptive thresholding, spatial filtering.
-- **Character segmentation (DIP)** for visual verification of extracted glyphs.
-- **PaddleOCR-based text extraction** with timestamped CSV logging.
-- **Privacy mode** to blur license plates in the original image.
-- **Streamlit UI** with selectable DIP modes.
+## Overview
+**Deep Learning ALPR System** is a 6th‑semester Digital Image Processing (DIP) project that bridges modern AI with rigorous mathematical image processing. It uses a custom YOLOv8 detector to localize the plate, then applies a DIP‑first enhancement bridge (spatial + frequency domain) to maximize character clarity before OCR extraction with PaddleOCR.
 
-## Project Structure
-- [app.py](app.py): Streamlit application entry point and UI logic.
-- [processing.py](processing.py): Plate detection, perspective transform, enhancement, and blurring.
-- [extraction.py](extraction.py): OCR extraction and CSV persistence.
-- [best.pt](best.pt): Custom-trained YOLOv8 model weights.
-- [requirements.txt](requirements.txt): Python dependencies.
-- pics/: Sample images (optional).
+## Key Features
+- **AI‑only localization** using a custom YOLOv8 model for reliable plate detection.
+- **DIP enhancement bridge** with selectable modes: CLAHE, HE, sharpening, adaptive thresholding, and FFT high‑pass filtering.
+- **Mandatory DIP concepts satisfied**:
+  - **Frequency domain filtering** (FFT high‑pass sharpening).
+  - **Spatial domain operations** (bilateral filtering, Gaussian blur, morphological opening, adaptive thresholding).
+  - **Histogram analysis** (256‑bin grayscale histograms: raw vs. enhanced).
+  - **Edge detection** (Sobel gradient magnitude map).
+  - **Quantitative evaluation** (MSE and PSNR).
+- **Dual application modes**: text extraction (CSV logging) and privacy‑preserving plate blurring.
+- **Streamlit UI** with a cyberpunk dark theme and a 4‑step visual pipeline.
 
-## Architecture Overview
-1. **Upload image** in the Streamlit UI.
-2. **Plate localization** via YOLOv8 (AI-only detection).
-3. **Perspective warp** isolates the plate region.
-4. **DIP enhancement** (CLAHE/HE/sharpen/adaptive/none).
-5. **Character segmentation** (DIP) for visual verification.
-6. **PaddleOCR extracts** the plate text.
-7. **Output saved** to CSV; optional **blurring** for anonymization.
+## System Architecture / Pipeline Flow
+1. **Input acquisition**: image upload or disk path load.
+2. **Localization**: YOLOv8 detects plate coordinates.
+3. **Perspective correction**: geometric warping to frontal view.
+4. **DIP enhancement bridge**: spatial/frequency filters to optimize contrast.
+5. **Edge analysis**: Sobel X/Y gradient magnitude map.
+6. **Histogram analysis**: 256‑bin grayscale histograms for raw vs. enhanced.
+7. **Character segmentation**: adaptive thresholding + morphological opening.
+8. **OCR extraction**: PaddleOCR reads multi‑line text.
+9. **Persistence**: results logged to CSV; optional plate blurring saved to disk.
 
-## Features
-### 1) Plate Text Extraction
-- Detects license plate location (YOLOv8).
-- Warps and enhances the plate region (selectable DIP mode).
-- Optionally segments characters for visualization.
-- Extracts text using PaddleOCR.
-- Saves results to a timestamped CSV file in the extracted_data folder.
+## Installation & Setup
+### Prerequisites
+- Python 3.9+
 
-### 2) Plate Blurring (Anonymization)
-- Detects license plate location.
-- Applies Gaussian blur to the plate area.
-- Saves the anonymized image in the blurred_plates folder.
+### Environment Setup
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-## Requirements
-- Python 3.9+ recommended
-- See [requirements.txt](requirements.txt) for full dependency list.
+### Critical Dependencies (Stable Builds)
+To avoid Windows OCR engine crashes, use the pinned versions below:
+- paddlepaddle==2.6.2
+- paddleocr==2.8.1
+- streamlit>=1.30.0
+- opencv-python>=4.8.0
+- ultralytics>=8.1.0
+- matplotlib
+- pandas
 
-## Setup
-1. **Create and activate a virtual environment**.
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Ensure model weights are present**:
-   - Place [best.pt](best.pt) in the project root.
+### Model Weights
+Place the custom YOLOv8 weights file in the project root:
+- best.pt
 
-## Run the Application
+## Usage
 ```bash
 streamlit run app.py
 ```
 
-## Output Files
-- **Extracted text logs**: extracted_data/extracted_plates.csv
-- **Blurred images**: blurred_plates/blurred_<image_name>.jpg
+### UI Workflow
+1. Select **Image Source**: Upload or Load from Disk.
+2. Choose **DIP Enhancement Mode** (default: FFT).
+3. Click **Process Image**.
+4. Review the 4‑step DIP visualization and metrics.
 
-## Notes on Accuracy
-- Detection quality depends on the **custom YOLOv8 model** and image quality.
-- OCR results improve with clear, well-lit plates.
-- The enhancement pipeline is designed to preserve natural gradients for OCR stability.
+## Directory Structure
+```
+.
+├── .streamlit/
+├── blurred_plates/
+├── extracted_data/
+├── pics/
+├── app.py
+├── processing.py
+├── extraction.py
+├── best.pt
+├── requirements.txt
+└── README.md
+```
 
-## Extending the Project
-- Replace or fine-tune the YOLO model for different regions or plate formats.
-- Add post-processing for plate normalization (e.g., regex validation).
-- Store results in a database instead of CSV.
-- Add batch processing for multiple images.
-- Add quantitative evaluation (precision/recall, OCR accuracy) for YOLO vs DIP.
+## Outputs
+- Extracted text logs: extracted_data/extracted_plates.csv
+- Blurred images: blurred_plates/blurred_<image_name>.jpg
+
+## Academic Alignment (DIP Requirements)
+- **Image I/O**: load from disk + save processed outputs.
+- **Preprocessing**: grayscale, denoising, normalization/contrast enhancement.
+- **Core DIP algorithms**: spatial filters, morphology, segmentation, FFT filtering.
+- **Post‑processing**: metrics (MSE, PSNR), histogram analysis.
+- **Integration**: end‑to‑end pipeline from input to final output.
 
 ## Acknowledgements
-- **Ultralytics YOLOv8** for detection
-- **PaddleOCR** for text recognition
-- **OpenCV** and **NumPy** for image processing
-- **Streamlit** for the interactive UI
+- Ultralytics YOLOv8
+- PaddleOCR
+- OpenCV, NumPy, Matplotlib
+- Streamlit
 
 ## License
-This project is for academic and research use. Add a license file if you plan to publish publicly.
+Academic use only. Add a license file if publishing publicly.
